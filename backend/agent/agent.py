@@ -60,13 +60,25 @@ def _get_agent():
     return _agent
 
 
-def call_agent(session_id: str, prompt: str) -> tuple[str, str]:
-    """Run one user turn inside a session; returns (answer, phase)."""
+def run_turn(session_id: str, prompt: str) -> dict:
+    """Run one user turn inside a session; returns answer, phase and the tool calls made."""
     history = _sessions.setdefault(session_id, [])
     history.append({"role": "user", "content": prompt})
 
     result = _get_agent().invoke({"messages": history[-MAX_HISTORY:]})
     reply: AgentReply = result["structured_response"]
 
+    tools = [
+        call["name"]
+        for message in result["messages"]
+        for call in (getattr(message, "tool_calls", None) or [])
+    ]
+
     history.append({"role": "assistant", "content": reply.answer})
-    return reply.answer, reply.phase
+    return {"answer": reply.answer, "phase": reply.phase, "tools": tools}
+
+
+def call_agent(session_id: str, prompt: str) -> tuple[str, str]:
+    """Run one user turn inside a session; returns (answer, phase)."""
+    turn = run_turn(session_id, prompt)
+    return turn["answer"], turn["phase"]

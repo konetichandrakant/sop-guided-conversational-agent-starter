@@ -69,8 +69,65 @@ Start the API:
 uvicorn api.chat:app --reload
 ```
 
-Then open `frontend/index.html` in a browser (or `python -m http.server` inside
-`frontend/` and use that URL). The UI is plain HTML/JS, no build step.
+The API also serves the test UI itself, so open http://localhost:8000 and chat there.
+Alternatively open `frontend/index.html` directly (or `python -m http.server` inside
+`frontend/`) — the UI falls back to `http://localhost:8000` for the API. It's plain
+HTML/JS, no build step.
+
+## Run with Docker
+
+Put your key in `backend/.env` first (same `MODEL_NAME` / `MODEL_API_TOKEN` as above),
+then:
+
+```
+docker compose up --build
+```
+
+Open http://localhost:8000. The token is passed to the container as an environment
+variable at runtime; it is excluded from the image via `.dockerignore`, so nothing
+secret ends up in a layer you might push.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+pytest                    # SOP gates at the service layer - deterministic, no API key
+pytest tests/test_agent_  # agent behaviour - needs a real key in backend/.env
+```
+
+The service tests pin the gates themselves: 3-PII counting (including aliases, and
+ID type alone not counting), consent pending/declined/timeout-escalation, claim
+search ranking, guideline answers and the email path.
+
+The agent tests run real conversations through DeepEval, covering the assignment's
+demo case end to end (verify → remembered intent → grounded denial → document
+guidance → email summary), plus partial-PII blocking, alternate identity fields,
+out-of-scope refusal with human escalation, the frustration scenario, and the
+representative + consent flow. Tool routing is scored exactly — was
+`verify_profile` called before any `get_claim`, was `consent` recorded before
+disclosure, did `send_email_summary` fire only after agreement — while the
+judgement calls (tone, no-disclosure phrasing, grounded answers) go to an LLM
+judge. The judge reuses your own `MODEL_NAME` and token, so there's no separate
+judge key to configure.
+
+### Reliability report
+
+For a fuller picture than pass/fail, one command runs seven scripted conversations
+(the assignment's caller, partial/wrong identity, out-of-scope pushes, the
+frustration scenario, the representative consent flow) and writes
+`backend/eval/agent_eval_report.json`:
+
+```
+python eval/run_eval.py
+```
+
+Every turn in the report records the input, the agent's output, the SOP phase it
+reported, the full tool-call trace (tool name, input, output), the deterministic
+correctness checks (gate violations are counted separately), and — where the
+scenario has ground truth — the judge's score of the actual output against the
+expected output, with its reasoning. The summary at the top carries the scenario
+pass rate, check rate, gate violation count, total tool calls and average judge
+score, so you can see at one glance how reliably the agent is holding the SOP.
 
 ## Trying it
 

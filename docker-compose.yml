@@ -1,0 +1,8 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8000:8000"
+    # API auth token and model name; see backend/.env.example
+    env_file:
+      - backend/.env

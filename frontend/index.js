@@ -2,7 +2,12 @@
 // Talks to the FastAPI backend (POST /chat) and mirrors the workflow phases
 // from workflow.txt: VERIFY_ID -> RESOLVE_INTENT -> PROCESS_CASE -> POST_PROCESS.
 
-const API_URL = "http://localhost:8000/chat";
+// Same origin when the API serves this page (uvicorn at :8000 or behind a proxy);
+// fall back to the local API port when the page is opened from disk or another server.
+const API_URL =
+  location.protocol.startsWith("http") && (location.port === "8000" || location.port === "")
+    ? "/chat"
+    : "http://localhost:8000/chat";
 const PHASES = ["VERIFY_ID", "RESOLVE_INTENT", "PROCESS_CASE", "POST_PROCESS"];
 
 // New session per page load, so the agent's memory matches what's on screen.
