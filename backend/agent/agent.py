@@ -8,12 +8,19 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from pydantic import BaseModel, Field
 
-from agent.tools import get_claim, verify_profile
+from agent.tools import (
+    consent,
+    find_representative,
+    get_claim,
+    get_claim_guidance,
+    send_email_summary,
+    verify_profile,
+)
 
 # MODEL_NAME / MODEL_API_TOKEN come from backend/.env
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-TOOLS = [verify_profile, get_claim]
+TOOLS = [verify_profile, find_representative, consent, get_claim, get_claim_guidance, send_email_summary]
 
 with open(Path(__file__).resolve().parent / "prompts.json", "r", encoding="utf-8") as file:
     prompts = json.load(file)
