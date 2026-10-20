@@ -41,6 +41,11 @@ def get_by_ids(party_id: str, case_id: Optional[str] = None) -> list[Claim]:
     return claims
 
 
+def get_by_case_id(case_id: str) -> Optional[Claim]:
+    """Exact lookup of a single claim by its case_id, across all policy holders."""
+    return next((claim for claim in _load_all() if claim.case_id == case_id), None)
+
+
 def _searchable_text(claim: Claim) -> str:
     """Every free-text field of the claim, lowercased, for search to look at."""
     parts = [claim.summary, claim.denial_reason, claim.case_type, *claim.documents_needed]
