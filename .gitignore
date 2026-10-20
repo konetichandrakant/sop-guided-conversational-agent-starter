@@ -16,3 +16,14 @@ node_modules/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Test artifacts
+.deepeval/
+deepeval_results.json
+
+# Eval reports (regenerate with: python eval/run_eval.py)
+backend/eval/agent_eval_report.json
+
+# Local-only files
+workflow.txt
+.vscode/
