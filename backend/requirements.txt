@@ -1,4 +1,10 @@
 fastapi
 langchain
 pydantic
+python-dotenv
 uvicorn[standard]
+
+# Model provider - one of these, matching MODEL_NAME in .env:
+langchain-openai
+# langchain-anthropic
+# langchain-google-genai
