@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Insurance Claims Support</title>
+  <link rel="stylesheet" href="index.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="app-title">
+        <span class="app-logo">IC</span>
+        <div>
+          <h1>Insurance Claims Support</h1>
+          <p>Chat with the SOP-guided claims agent</p>
+        </div>
+      </div>
+      <span id="phase-pill" class="phase-pill">VERIFY_ID</span>
+    </header>
+
+    <nav id="stepper" class="stepper" aria-label="Workflow phases">
+      <div class="step" data-phase="VERIFY_ID">
+        <span class="step-dot">1</span>
+        <div class="step-text"><strong>Verify identity</strong><small>3+ PII fields</small></div>
+      </div>
+      <div class="step" data-phase="RESOLVE_INTENT">
+        <span class="step-dot">2</span>
+        <div class="step-text"><strong>Resolve intent</strong><small>What does the caller need?</small></div>
+      </div>
+      <div class="step" data-phase="PROCESS_CASE">
+        <span class="step-dot">3</span>
+        <div class="step-text"><strong>Process case</strong><small>Grounded claim answers</small></div>
+      </div>
+      <div class="step" data-phase="POST_PROCESS">
+        <span class="step-dot">4</span>
+        <div class="step-text"><strong>Post-process</strong><small>Email summary &amp; wrap-up</small></div>
+      </div>
+    </nav>
+
+    <main id="chat" class="chat" aria-live="polite"></main>
+
+    <div id="suggestion" class="suggestion">
+      <button type="button" id="suggestion-btn">
+        Try the demo test case: &ldquo;I&rsquo;m the policyholder. My name is Margaret Chen, policy POL-9921.
+        I&rsquo;m calling about my denied healthcare claim from January. DOB is 1985-03-15, SSN last four is 4472.&rdquo;
+      </button>
+    </div>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <input
+        id="prompt-input"
+        type="text"
+        placeholder="Type your message..."
+        aria-label="Your message"
+        maxlength="2000"
+      />
+      <button id="send-btn" type="submit">Send</button>
+    </form>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
