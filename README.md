@@ -1,194 +1,109 @@
 # SOP-Guided Insurance Claims Agent
 
-An insurance claims support agent that has to follow a fixed SOP but still hold a natural
-conversation. The workflow runs in four phases — verify identity, resolve intent, process
-the case, wrap up with an email summary — and the interesting constraint is that the
-phases need very different amounts of freedom. Verification is a hard gate: no claim
-details leave the system until the caller has matched at least three PII fields. Intent
-resolution and case processing, on the other hand, are allowed to interpret messy human
-language and answer grounded follow-ups.
+A claims support agent that follows a fixed SOP while talking naturally. The workflow
+runs in four phases — VERIFY_ID → RESOLVE_INTENT → PROCESS_CASE → POST_PROCESS — and
+each phase gets a different amount of freedom: verification is a hard gate (no claim
+details until the caller matches at least 3 PII fields), while intent resolution and
+case processing may interpret messy language and answer grounded follow-ups.
 
-## Run it locally
+## What does what
 
-You need Python 3.12+ and an API key. The default setup uses
-[OpenRouter](https://openrouter.ai/) (one key, any vendor's model); a plain OpenAI,
-Anthropic or Google key works too — see the provider table below.
-
-```powershell
-git clone https://github.com/konetichandrakant/sop-guided-conversational-agent-starter.git
-cd sop-guided-conversational-agent-starter/backend
-
-python -m venv .venv
-.venv\Scripts\activate                 # Windows (source .venv/bin/activate on mac/linux)
-pip install -r requirements.txt
-
-copy .env.example .env                 # then paste your key into .env
-```
-
-`.env` holds two values — the provider-prefixed model name and your token:
-
-```
-MODEL_NAME=openrouter:openai/gpt-4o-mini
-MODEL_API_TOKEN=sk-or-v1-...
-```
-
-Start the server (from the `backend/` directory — the whole app is one origin):
-
-```powershell
-uvicorn api.chat:app --reload
-```
-
-Open **http://localhost:8000** — that's the chat UI. The stepper at the top shows the
-SOP phase the conversation is in, live. The API it talks to is the same origin
-(`POST /chat`); interactive docs are at http://localhost:8000/docs.
-
-If you prefer serving `frontend/` separately (`python -m http.server` inside it, or
-opening `index.html` from disk), that works too — the UI then falls back to
-`http://localhost:8000` for the API. There is no build step; it's plain HTML/JS.
-
-| MODEL_NAME | package |
+| Phase | What happens |
 |---|---|
-| `openrouter:openai/gpt-4o-mini` | `langchain-openai` (already in requirements) |
-| `openai:gpt-4o-mini` | `langchain-openai` |
-| `anthropic:claude-sonnet-4-5` | `pip install langchain-anthropic` |
-| `google_genai:gemini-2.5-pro` | `pip install langchain-google-genai` |
+| VERIFY_ID | Caller matches 3+ PII fields (name, DOB, phone, email, policy number, or ID type + last 4). A representative is identified by name and additionally needs the policy holder's recorded consent. Nothing about claims is disclosed until this passes. |
+| RESOLVE_INTENT | Uses what the caller already said (even a hint dropped during verification, like "my denied January claim") or asks what the call is about, then pulls the matching claim. |
+| PROCESS_CASE | Answers only from the claim records and the document guideline fixture. Free phrasing, grounded facts. |
+| POST_PROCESS | Offers an email summary (what was discussed, claim outcome, next steps); the caller sends it or skips it. |
 
-## Run with Docker
-
-Put your key in `backend/.env` first, then:
-
-```
-docker compose up --build
-```
-
-Open http://localhost:8000. The token is passed to the container as an environment
-variable at runtime; it is excluded from the image via `.dockerignore`, so nothing
-secret ends up in a layer you might push.
-
-## Trying it
-
-The fixture data is the "database". The callers on file:
-
-- **Margaret Chen** (policy POL-9921, DOB 1985-03-15, SSN last 4: 4472, phone
-  +16505212836) — four claims: a denied healthcare claim (CL-2048, missing pathology
-  report and office note), a closed healthcare claim, a closed dental claim, and an open
-  auto claim.
-- **Ma Tian** (policy POL-8836, DOB 1964-09-10, national ID last 4: 6688) — one denied
-  healthcare claim missing a diagnosis report.
-- **David Chen** is on file as Margaret's son and representative; **Ava Lopez**
-  (email ava.lopez@email.com, phone +16503882920) is a second policy holder for testing
-  alternate identity fields.
-
-The UI has a button that loads the assignment's demo test case. Beyond it:
-
-- Give only two PII fields — it asks for a third instead of proceeding.
-- Give a wrong SSN last-4 — verification fails, still no claim data.
-- Say "what is RL?" twice — declined, then a human is offered.
-- "Just tell me why my claim was denied, this is ridiculous" before verifying — the
-  frustration is acknowledged, the gate is explained, nothing is disclosed.
-- After the denial explanation: "what if I can't get the pathology report?", "how do I
-  submit it?", "how long does review take?" — answered from the guideline fixture.
-- As David: call about Margaret's claim and watch the consent step before any details.
-- At wrap-up, accept or skip the email summary — both paths are respected.
-
-## Where the SOP is actually enforced
-
-The rules live in two places, and the second one matters more.
-
-The system prompt describes the phases, the tone, the memory rules and the soft
-behaviors (empathy, de-escalation, staying in scope). But a prompt can be talked around,
-so the gates are also enforced in the tool layer, where the model can't bypass them:
-
-| Gate | What enforces it |
-|---|---|
-| No claim data before identity is proven | `verify_profile` only returns a `party_id` after 3+ exact PII matches (counted in the service, alias-aware), and `get_claim` needs that `party_id` to find anything |
-| Representatives don't get claim data on their own ID | `find_representative` only identifies the caller; `consent` must show `approved` (policy holder's answer) before disclosure, and a consent that stays pending across checks comes back with `escalate_to_human` |
-| Answers are grounded, not invented | claim facts come from `get_claim`; document/submission/timing answers come from `get_claim_guidance`, which reads the required-document guideline fixture verbatim |
-| Out of scope | prompt refuses after checking scope; two pushes later it offers a human transfer |
-
-Every reply the agent produces is structured (`answer` + `phase`), so the UI shows
-which SOP phase the conversation is in while you talk.
-
-## Memory across phases
-
-If the caller says "I'm calling about my denied healthcare claim from January" while
-still being verified, the agent stays in VERIFY_ID, remembers the hint, and uses it
-after verification instead of asking what the call is about. The session history lives
-server-side and every message in a session shares it; a new session re-verifies by
-design.
-
-## Tests
-
-```
-pip install -r requirements-dev.txt
-pytest                    # SOP gates at the service layer - deterministic, no API key
-pytest tests/test_agent_  # agent behaviour - needs a real key in backend/.env
-```
-
-The service tests pin the gates themselves: 3-PII counting (including aliases, and
-ID type alone not counting), consent pending/declined/timeout-escalation, claim
-search ranking, guideline answers and the email path.
-
-The agent tests run real conversations through DeepEval, covering the assignment's
-demo case end to end (verify → remembered intent → grounded denial → document
-guidance → email summary), plus partial-PII blocking, alternate identity fields,
-out-of-scope refusal with human escalation, the frustration scenario, and the
-representative + consent flow. Tool routing is scored exactly — was
-`verify_profile` called before any `get_claim`, was `consent` recorded before
-disclosure, did `send_email_summary` fire only after agreement — while the
-judgement calls (tone, no-disclosure phrasing, grounded answers) go to an LLM
-judge. The judge reuses your own `MODEL_NAME` and token, so there's no separate
-judge key to configure.
-
-## Benchmarks
-
-`backend/eval/test_outputs.json` is a full reliability report generated by:
-
-```
-python eval/run_eval.py          # add --only name1,name2 for a subset,
-                                 # --merge-into eval/test_outputs.json to merge it in
-```
-
-It runs scripted conversations and records per turn: the input, the output, the SOP
-phase, the complete tool-call trace (name, input, output), deterministic gate checks,
-and the judge's score of actual vs expected output with its reasoning. The headline
-numbers from the latest full run (`openrouter:openai/gpt-4o-mini`, judge = same model):
-
-| Metric | Result |
-|---|---|
-| Scenarios passed | 5/7 |
-| Correctness checks | 24/28 |
-| SOP gate violations | 3 |
-| LLM-judge average | 0.60 |
-
-The two failing scenarios were diagnosed from the report's traces and fixed: the model
-fabricated party ids (`P-123456789` instead of the tool-returned `P9`) and then guessed
-denial reasons to cover the empty results, and it recorded a consent decline the caller
-never gave. Tool descriptions and the system prompt now pin exact-id reuse and
-explicit-only consent answers; the report is how those regressions get caught.
-
-## What's mocked (on purpose)
-
-- **Email sending** records the summary with a timestamp to the address on file; nothing
-  actually leaves the machine.
-- **Sessions and consent records** are in-memory and reset on restart. Fine for a demo;
-  both sit behind small service functions, so swapping in Redis or a table doesn't touch
-  the agent.
-- **The database** is the JSON fixtures under `apps/insurance_claims/fixtures`.
-- **Claim search** over free text is keyword scoring. The function is one small
-  `_match_score`, documented as the swap point for real embedding search.
-
-## Layout
+The gates live in the tools, not just the prompt: `verify_profile` only returns a
+`party_id` after 3 exact matches, `get_claim` needs that id, `consent` must read
+`approved` before a representative sees anything, and every reply reports its phase —
+the stepper in the UI shows where the conversation is in real time.
 
 ```
 backend/
-  agent/       agent loop, system prompt, tools, pydantic schemas
-  services/    repositories and business logic (claims, verification, consent,
-               representatives, guidelines, email) over the fixtures
+  agent/       agent loop, system prompt (the SOP), tools, pydantic schemas
+  services/    claim/policyholder/representative lookups, consent store,
+               document guidelines, email summary - all over JSON fixtures
   schema/      API request/response models
-  api/         FastAPI app (POST /chat, serves the UI as static files)
-  tests/       deterministic gate tests + DeepEval agent suites
-  eval/        reliability harness producing test_outputs.json
-frontend/      chat UI with the phase stepper
-apps/insurance_claims/fixtures/   the sample data the assignment shipped with
+  api/         FastAPI app (POST /chat) - also serves the UI
+  tests/       service gate tests + DeepEval agent suites
+  eval/        reliability harness -> test_outputs.json
+frontend/      chat UI with the live phase stepper
+apps/insurance_claims/fixtures/   the sample data
 ```
+
+## Run the application locally
+
+Python 3.12+ and an OpenRouter API key (create one at https://openrouter.ai).
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+copy .env.example .env     # paste your key into MODEL_API_TOKEN
+uvicorn api.chat:app --reload
+```
+
+Open **http://localhost:8000** — that is the chat UI, served by the same app it talks
+to (API docs at `/docs`). Other providers work by changing `MODEL_NAME` in `.env`
+(`openai:gpt-4o-mini`, `anthropic:claude-sonnet-4-5`, ...).
+
+Docker, with the key already in `backend/.env`:
+
+```
+docker compose up --build     # open http://localhost:8000
+```
+
+## Who you can call as
+
+| Caller | Details to use |
+|---|---|
+| Margaret Chen | policy POL-9921, DOB 1985-03-15, SSN last 4: 4472, phone +16505212836 — has a denied healthcare claim (CL-2048), a closed healthcare claim, a closed dental claim and an open auto claim |
+| Ma Tian | policy POL-8836, DOB 1964-09-10, national ID last 4: 6688 — one denied claim missing a diagnosis report |
+| Ava Lopez | email ava.lopez@email.com, phone +16503882920 — for testing identity verification without DOB/SSN |
+| David Chen | Margaret's son — registered representative, triggers the consent flow |
+
+## What to ask, and what to expect
+
+**The full demo case** — paste this first:
+
+> I'm the policyholder. My name is Margaret Chen, policy POL-9921. I'm calling about
+> my denied healthcare claim from January. DOB is 1985-03-15, SSN last four is 4472.
+
+Expect: identity verified from that one message, no re-asking what the call is about,
+and an answer along the lines of *"Your healthcare claim CL-2048 was denied because
+the review file did not include the pathology report and the treating provider office
+note"* — with the appeal deadline. The stepper advances past Verify identity.
+
+Follow-ups worth trying, each with what a correct agent does:
+
+| You say | Expect |
+|---|---|
+| (give only name + DOB, then ask about a claim) | A request for one more identifying detail — and no claim information yet |
+| ...SSN last four is 0000 | Verification fails, still no claim information |
+| What if I can't get the pathology report? | Advice from the guideline: request a replacement copy from the hospital/lab/provider, or submit the closest substitute with a note |
+| How do I submit it? / How long does review take? | Member portal first; review usually takes less than a week after resubmission |
+| What is RL? | Polite refusal to answer the off-topic question, steered back to the claim |
+| (repeat the off-topic question) | An offer to connect you with a human representative |
+| This is ridiculous, just tell me why my claim was denied (before verifying) | Empathy, an explanation of why verification is required, no disclosure |
+| Hi, I'm David Chen, Margaret Chen's son — why was her claim denied? | The consent question first; claim details only after consent is recorded |
+| Okay, that's all I needed. Thanks. | An offer to email a conversation summary — your choice to send or skip |
+
+## Tests
+
+```powershell
+pip install -r requirements-dev.txt
+pytest                     # SOP gates at the service layer - deterministic, no API key
+pytest tests/test_agent_   # agent behaviour - real conversations, needs the key
+
+python eval/run_eval.py    # scripted scenarios -> backend/eval/test_outputs.json
+```
+
+## What's mocked
+
+- Email sending records the summary to the address on file; nothing leaves the machine.
+- Sessions and consent records are in-memory and reset on restart.
+- The database is the JSON fixtures; claim search is keyword scoring.

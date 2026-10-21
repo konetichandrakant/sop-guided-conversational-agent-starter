@@ -40,7 +40,7 @@ class Claim(BaseModel):
 # what the agent sends into get_claim: party_id comes from verify_profile,
 # the rest is optional context from the user's message (Claim is the output)
 class ClaimQuery(BaseModel):
-    party_id: str = Field(description="Party ID of the policy holder, as returned by verify_profile", pattern="^P.+")
+    party_id: str = Field(description="Party ID of the policy holder", pattern="^P.+")
     case_id: Optional[str] = Field(default=None, description="One specific case ID if the user named it, e.g. CL-2048", pattern="^CL-.+")
     case_type: Optional[Literal["healthcare", "dental", "auto"]] = Field(default=None, description="Filter by claim category")
     status: Optional[Literal["open", "closed", "denied"]] = Field(default=None, description="Filter by claim status")
