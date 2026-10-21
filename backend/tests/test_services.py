@@ -1,7 +1,4 @@
-"""
-SOP gate tests at the service and tool layer.
-Deterministic, fast, no API key needed.
-"""
+"""SOP gate tests at the service layer (deterministic, no API key)."""
 
 import json
 import sys
