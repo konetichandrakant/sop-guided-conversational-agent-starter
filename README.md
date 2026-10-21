@@ -8,6 +8,89 @@ details leave the system until the caller has matched at least three PII fields.
 resolution and case processing, on the other hand, are allowed to interpret messy human
 language and answer grounded follow-ups.
 
+## Run it locally
+
+You need Python 3.12+ and an API key. The default setup uses
+[OpenRouter](https://openrouter.ai/) (one key, any vendor's model); a plain OpenAI,
+Anthropic or Google key works too — see the provider table below.
+
+```powershell
+git clone https://github.com/konetichandrakant/sop-guided-conversational-agent-starter.git
+cd sop-guided-conversational-agent-starter/backend
+
+python -m venv .venv
+.venv\Scripts\activate                 # Windows (source .venv/bin/activate on mac/linux)
+pip install -r requirements.txt
+
+copy .env.example .env                 # then paste your key into .env
+```
+
+`.env` holds two values — the provider-prefixed model name and your token:
+
+```
+MODEL_NAME=openrouter:openai/gpt-4o-mini
+MODEL_API_TOKEN=sk-or-v1-...
+```
+
+Start the server (from the `backend/` directory — the whole app is one origin):
+
+```powershell
+uvicorn api.chat:app --reload
+```
+
+Open **http://localhost:8000** — that's the chat UI. The stepper at the top shows the
+SOP phase the conversation is in, live. The API it talks to is the same origin
+(`POST /chat`); interactive docs are at http://localhost:8000/docs.
+
+If you prefer serving `frontend/` separately (`python -m http.server` inside it, or
+opening `index.html` from disk), that works too — the UI then falls back to
+`http://localhost:8000` for the API. There is no build step; it's plain HTML/JS.
+
+| MODEL_NAME | package |
+|---|---|
+| `openrouter:openai/gpt-4o-mini` | `langchain-openai` (already in requirements) |
+| `openai:gpt-4o-mini` | `langchain-openai` |
+| `anthropic:claude-sonnet-4-5` | `pip install langchain-anthropic` |
+| `google_genai:gemini-2.5-pro` | `pip install langchain-google-genai` |
+
+## Run with Docker
+
+Put your key in `backend/.env` first, then:
+
+```
+docker compose up --build
+```
+
+Open http://localhost:8000. The token is passed to the container as an environment
+variable at runtime; it is excluded from the image via `.dockerignore`, so nothing
+secret ends up in a layer you might push.
+
+## Trying it
+
+The fixture data is the "database". The callers on file:
+
+- **Margaret Chen** (policy POL-9921, DOB 1985-03-15, SSN last 4: 4472, phone
+  +16505212836) — four claims: a denied healthcare claim (CL-2048, missing pathology
+  report and office note), a closed healthcare claim, a closed dental claim, and an open
+  auto claim.
+- **Ma Tian** (policy POL-8836, DOB 1964-09-10, national ID last 4: 6688) — one denied
+  healthcare claim missing a diagnosis report.
+- **David Chen** is on file as Margaret's son and representative; **Ava Lopez**
+  (email ava.lopez@email.com, phone +16503882920) is a second policy holder for testing
+  alternate identity fields.
+
+The UI has a button that loads the assignment's demo test case. Beyond it:
+
+- Give only two PII fields — it asks for a third instead of proceeding.
+- Give a wrong SSN last-4 — verification fails, still no claim data.
+- Say "what is RL?" twice — declined, then a human is offered.
+- "Just tell me why my claim was denied, this is ridiculous" before verifying — the
+  frustration is acknowledged, the gate is explained, nothing is disclosed.
+- After the denial explanation: "what if I can't get the pathology report?", "how do I
+  submit it?", "how long does review take?" — answered from the guideline fixture.
+- As David: call about Margaret's claim and watch the consent step before any details.
+- At wrap-up, accept or skip the email summary — both paths are respected.
+
 ## Where the SOP is actually enforced
 
 The rules live in two places, and the second one matters more.
@@ -23,7 +106,7 @@ so the gates are also enforced in the tool layer, where the model can't bypass t
 | Answers are grounded, not invented | claim facts come from `get_claim`; document/submission/timing answers come from `get_claim_guidance`, which reads the required-document guideline fixture verbatim |
 | Out of scope | prompt refuses after checking scope; two pushes later it offers a human transfer |
 
-Every reply the agent produces is structured (`answer` + `phase`), so the test UI shows
+Every reply the agent produces is structured (`answer` + `phase`), so the UI shows
 which SOP phase the conversation is in while you talk.
 
 ## Memory across phases
@@ -31,61 +114,8 @@ which SOP phase the conversation is in while you talk.
 If the caller says "I'm calling about my denied healthcare claim from January" while
 still being verified, the agent stays in VERIFY_ID, remembers the hint, and uses it
 after verification instead of asking what the call is about. The session history lives
-server-side and every message in a session shares it.
-
-## Setup
-
-You need Python 3.12+ and an API key for a model provider.
-
-```
-cd backend
-python -m venv .venv
-.venv\Scripts\activate            # Windows
-pip install -r requirements.txt
-
-copy .env.example .env            # then put your key in it
-```
-
-`.env` holds two values:
-
-```
-MODEL_NAME=openai:gpt-4o-mini
-MODEL_API_TOKEN=sk-...
-```
-
-The provider is whatever prefix you put on `MODEL_NAME`. With OpenAI the preinstalled
-`langchain-openai` is enough; for another provider install its package and change the
-prefix:
-
-| MODEL_NAME | package |
-|---|---|
-| `openai:gpt-4o-mini` | `langchain-openai` (already in requirements) |
-| `anthropic:claude-sonnet-4-5` | `pip install langchain-anthropic` |
-| `google_genai:gemini-2.5-pro` | `pip install langchain-google-genai` |
-
-Start the API:
-
-```
-uvicorn api.chat:app --reload
-```
-
-The API also serves the test UI itself, so open http://localhost:8000 and chat there.
-Alternatively open `frontend/index.html` directly (or `python -m http.server` inside
-`frontend/`) — the UI falls back to `http://localhost:8000` for the API. It's plain
-HTML/JS, no build step.
-
-## Run with Docker
-
-Put your key in `backend/.env` first (same `MODEL_NAME` / `MODEL_API_TOKEN` as above),
-then:
-
-```
-docker compose up --build
-```
-
-Open http://localhost:8000. The token is passed to the container as an environment
-variable at runtime; it is excluded from the image via `.dockerignore`, so nothing
-secret ends up in a layer you might push.
+server-side and every message in a session shares it; a new session re-verifies by
+design.
 
 ## Tests
 
@@ -110,49 +140,32 @@ judgement calls (tone, no-disclosure phrasing, grounded answers) go to an LLM
 judge. The judge reuses your own `MODEL_NAME` and token, so there's no separate
 judge key to configure.
 
-### Reliability report
+## Benchmarks
 
-For a fuller picture than pass/fail, one command runs seven scripted conversations
-(the assignment's caller, partial/wrong identity, out-of-scope pushes, the
-frustration scenario, the representative consent flow) and writes
-`backend/eval/agent_eval_report.json`:
+`backend/eval/test_outputs.json` is a full reliability report generated by:
 
 ```
-python eval/run_eval.py
+python eval/run_eval.py          # add --only name1,name2 for a subset,
+                                 # --merge-into eval/test_outputs.json to merge it in
 ```
 
-Every turn in the report records the input, the agent's output, the SOP phase it
-reported, the full tool-call trace (tool name, input, output), the deterministic
-correctness checks (gate violations are counted separately), and — where the
-scenario has ground truth — the judge's score of the actual output against the
-expected output, with its reasoning. The summary at the top carries the scenario
-pass rate, check rate, gate violation count, total tool calls and average judge
-score, so you can see at one glance how reliably the agent is holding the SOP.
+It runs scripted conversations and records per turn: the input, the output, the SOP
+phase, the complete tool-call trace (name, input, output), deterministic gate checks,
+and the judge's score of actual vs expected output with its reasoning. The headline
+numbers from the latest full run (`openrouter:openai/gpt-4o-mini`, judge = same model):
 
-## Trying it
+| Metric | Result |
+|---|---|
+| Scenarios passed | 5/7 |
+| Correctness checks | 24/28 |
+| SOP gate violations | 3 |
+| LLM-judge average | 0.60 |
 
-The fixture data is the "database". Two callers exist with real claim history:
-
-- **Margaret Chen** (policy POL-9921, DOB 1985-03-15, SSN last 4: 4472, phone
-  +16505212836) — four claims: a denied healthcare claim (CL-2048, missing pathology
-  report and office note), a closed healthcare claim, a closed dental claim, and an open
-  auto claim.
-- **Ma Tian** (policy POL-8836, DOB 1964-09-10, national ID last 4: 6688) — one denied
-  healthcare claim missing a diagnosis report.
-- **David Chen** is on file as Margaret's son and representative.
-
-The UI has a button that loads the assignment's demo test case. Things worth trying
-beyond it:
-
-- Give only two PII fields — it asks for a third instead of proceeding.
-- Say "what is RL?" twice — it declines and then offers a human.
-- "Just tell me why my claim was denied, this is ridiculous" before verifying — it
-  acknowledges the frustration, explains why verification exists, and still doesn't
-  disclose.
-- After the denial explanation: "what if I can't get the pathology report?", "how do I
-  submit it?", "how long does review take?" — all answered from the guideline fixture.
-- As David: call about Margaret's claim and see the consent step before any details.
-- At wrap-up, accept or skip the email summary.
+The two failing scenarios were diagnosed from the report's traces and fixed: the model
+fabricated party ids (`P-123456789` instead of the tool-returned `P9`) and then guessed
+denial reasons to cover the empty results, and it recorded a consent decline the caller
+never gave. Tool descriptions and the system prompt now pin exact-id reuse and
+explicit-only consent answers; the report is how those regressions get caught.
 
 ## What's mocked (on purpose)
 
@@ -173,7 +186,9 @@ backend/
   services/    repositories and business logic (claims, verification, consent,
                representatives, guidelines, email) over the fixtures
   schema/      API request/response models
-  api/         FastAPI app (POST /chat)
+  api/         FastAPI app (POST /chat, serves the UI as static files)
+  tests/       deterministic gate tests + DeepEval agent suites
+  eval/        reliability harness producing test_outputs.json
 frontend/      chat UI with the phase stepper
 apps/insurance_claims/fixtures/   the sample data the assignment shipped with
 ```
