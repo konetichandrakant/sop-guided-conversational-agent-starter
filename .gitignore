@@ -27,3 +27,6 @@ deepeval_results.json
 # Local-only files
 workflow.txt
 .vscode/
+
+.vercel
+.env*

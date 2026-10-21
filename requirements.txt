@@ -1,0 +1,8 @@
+# Root requirements for Vercel's Python runtime (it installs from this file).
+# Pinned to the versions the backend was built and tested against; uvicorn is
+# not needed serverless - Vercel invokes the ASGI app directly.
+fastapi==0.149.0
+langchain==1.4.6
+langchain-openai==1.7.2
+pydantic==2.14.1
+python-dotenv==1.2.4

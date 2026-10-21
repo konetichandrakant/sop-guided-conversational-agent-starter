@@ -1,0 +1,13 @@
+# Keep the serverless bundle small and secrets out of the upload.
+.git
+.vscode
+Dockerfile
+docker-compose.yml
+backend/.venv
+backend/.env
+backend/.deepeval
+backend/.pytest_cache
+backend/tests
+backend/eval
+**/__pycache__
+*.pyc
