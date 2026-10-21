@@ -22,7 +22,7 @@ node_modules/
 deepeval_results.json
 
 # Eval reports (regenerate with: python eval/run_eval.py)
-backend/eval/agent_eval_report.json
+# backend/eval/test_outputs.json
 
 # Local-only files
 workflow.txt

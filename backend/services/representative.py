@@ -1,11 +1,4 @@
-"""
-Representative repository.
-
-Backed by the app fixture (apps/insurance_claims/fixtures/representatives.json).
-A representative is someone calling on behalf of a policy holder; finding the
-record is only the identification step - claim details still require the
-policy holder's recorded consent (see services/consent.py).
-"""
+"""Representative repository over the fixtures JSON."""
 
 import json
 from pathlib import Path
@@ -19,7 +12,6 @@ REPRESENTATIVES_FIXTURE = (
 
 
 def _load_all() -> list[Representative]:
-    """Repository read: parse every representative fixture row."""
     with open(REPRESENTATIVES_FIXTURE, "r", encoding="utf-8") as file:
         rows = json.load(file)
     return [Representative.model_validate(row) for row in rows]
@@ -30,7 +22,6 @@ def find_representative(
     buyer_name: Optional[str] = None,
     buyer_party_id: Optional[str] = None,
 ) -> list[Representative]:
-    """Exact lookup by representative name (case-insensitive), narrowed by buyer name or party id."""
     reps = [rep for rep in _load_all() if rep.rep_name.lower() == rep_name.strip().lower()]
 
     if buyer_party_id is not None:

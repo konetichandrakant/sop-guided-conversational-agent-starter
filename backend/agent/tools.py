@@ -22,7 +22,6 @@ from services.verification import verify_policyholder
     )
 )
 def verify_profile(data: Verification) -> str:
-    """Identity check; returns the verified party_id or a failure the agent can act on."""
     record, matched = verify_policyholder(data)
 
     if record is None:
@@ -52,6 +51,9 @@ def verify_profile(data: Verification) -> str:
     description=(
         "Identify a caller who is a REPRESENTATIVE calling on behalf of a policy holder "
         "(e.g. 'I'm his son, calling about my mother's claim'). "
+        "Call this IMMEDIATELY when the caller says they are calling for someone else - before asking "
+        "any identity questions; representatives are found by their own name in the registry, not by "
+        "the policy holder's PII. "
         "Looks the representative up by name, optionally narrowed by the policy holder's name or party id. "
         "Returns the representative record with buyer_party_id. This only identifies the caller: "
         "claim details may NOT be disclosed to a representative until the consent tool shows approved consent."
@@ -62,7 +64,6 @@ def find_representative(
     buyer_name: Optional[str] = None,
     buyer_party_id: Optional[str] = None,
 ) -> str:
-    """Representative lookup by name plus optional policy holder details."""
     reps = find_representative_record(rep_name, buyer_name, buyer_party_id)
 
     if not reps:
@@ -82,14 +83,14 @@ def find_representative(
 @tool(
     description=(
         "Record or check the policy holder's consent for a representative to receive their claim details. "
-        "With granted=true/false, records the policy holder's spoken answer to the consent question. "
-        "Without granted, returns the current status: pending, approved or declined, plus "
+        "With granted=true/false, records the policy holder's spoken answer to the consent question - "
+        "ONLY when the policy holder explicitly said yes or no; never assume or infer an answer. "
+        "If the question has not been answered yet, omit granted to check the current status: pending, approved or declined, plus "
         "escalate_to_human once a pending consent has timed out. "
         "Never disclose claim details to a representative while consent is pending or declined."
     )
 )
 def consent(buyer_party_id: str, granted: Optional[bool] = None) -> str:
-    """Consent gate for representative access; records an answer or checks status."""
     result = record_consent(buyer_party_id, granted) if granted is not None else get_consent(buyer_party_id)
 
     if result["status"] == "pending" and result.get("escalate_to_human"):
@@ -103,14 +104,15 @@ def consent(buyer_party_id: str, granted: Optional[bool] = None) -> str:
         "Fetch the insurance claims of a verified policy holder. "
         "Call this tool only when the caller is already verified and a party_id is known; "
         "otherwise call verify_profile first (or find_representative plus consent for a representative). "
-        "party_id is required. Optional filters: case_id for one specific claim, "
+        "party_id is required and must be EXACTLY the id a previous tool returned (e.g. 'P9') - "
+        "never invent, shorten or reformat one. "
+        "Optional filters: case_id for one specific claim, "
         "case_type (healthcare/dental/auto), status (open/closed/denied), and a free-text "
         "query describing what the user asks about, e.g. 'denied healthcare claim missing "
         "pathology report'. Returns the matching claim records as JSON."
     )
 )
 def get_claim(data: ClaimQuery) -> str:
-    """Claims lookup by party id plus optional filters; returns claim records as JSON."""
     claims = search_claims(
         party_id=data.party_id,
         case_id=data.case_id,
@@ -121,7 +123,12 @@ def get_claim(data: ClaimQuery) -> str:
 
     if not claims:
         return json.dumps(
-            {"message": f"No claims found for party_id {data.party_id} matching the given criteria."}
+            {
+                "message": (
+                    f"No claims found for party_id '{data.party_id}' matching the given criteria. "
+                    "Use the exact party_id returned by verify_profile (e.g. 'P9') and do not guess claim details."
+                )
+            }
         )
 
     return json.dumps([claim.model_dump() for claim in claims])
@@ -137,7 +144,6 @@ def get_claim(data: ClaimQuery) -> str:
     )
 )
 def get_claim_guidance(case_id: str, question: Optional[str] = None) -> str:
-    """Document requirements and follow-up guidance for one claim."""
     claim = get_by_case_id(case_id)
 
     if claim is None:
@@ -150,9 +156,12 @@ def get_claim_guidance(case_id: str, question: Optional[str] = None) -> str:
     description=(
         "Send the conversation summary email to the verified policy holder. "
         "Call this in POST_PROCESS only after the customer explicitly agreed to receive the email. "
+        "party_id must be EXACTLY the id returned by verify_profile (e.g. 'P9') - never invent or reformat one. "
         "The summary must cover what was discussed, the claim status/outcome and the next steps."
     )
 )
 def send_email_summary(party_id: str, summary: str) -> str:
-    """Email the wrap-up summary to the policy holder on file."""
     return json.dumps(send_summary(party_id, summary))
+
+
+TOOLS = [verify_profile, find_representative, consent, get_claim, get_claim_guidance, send_email_summary]

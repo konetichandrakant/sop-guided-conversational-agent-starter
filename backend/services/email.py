@@ -1,10 +1,4 @@
-"""
-Email summary sender for POST_PROCESS.
-
-Mock for the demo: records what would be sent, to the policy holder's address
-from the policyholders fixture. No real email leaves the system; a production
-build would hand the summary to a transactional email service.
-"""
+"""Mock email sender: records the summary to the policy holder's address on file."""
 
 import json
 from datetime import datetime
@@ -16,7 +10,6 @@ _SENT_SUMMARIES: list[dict] = []
 
 
 def send_summary(party_id: str, summary: str) -> dict:
-    """Send the conversation summary to the verified policy holder's email."""
     policyholder = next((row for row in load_policyholders() if row.get("party_id") == party_id), None)
 
     if policyholder is None:

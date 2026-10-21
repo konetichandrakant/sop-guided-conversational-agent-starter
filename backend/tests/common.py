@@ -1,7 +1,4 @@
-"""
-Shared test helpers: backend path bootstrap, .env loading, an agent turn runner,
-and a DeepEval judge that reuses the agent's own provider and API token.
-"""
+"""Shared helpers for the agent tests: env bootstrap, turn runner and the DeepEval judge."""
 
 import json
 import os
@@ -18,29 +15,23 @@ from dotenv import load_dotenv
 
 load_dotenv(BACKEND_DIR / ".env")
 
-# Agent tests need a real key; the placeholder copied from .env.example does not count.
 HAS_MODEL_KEY = (
     bool(os.environ.get("MODEL_API_TOKEN"))
     and os.environ["MODEL_API_TOKEN"] not in ("", "your-api-key-here")
 )
 
-from agent.agent import run_turn  # noqa: E402  (needs the sys.path bootstrap above)
+from agent.agent import run_turn  # noqa: E402
 
 
 def new_session() -> str:
-    """Fresh conversation so tests never share agent memory."""
     return uuid4().hex
 
 
 def turn(session_id: str, prompt: str) -> dict:
-    """One agent turn: answer, current SOP phase and the tool calls made."""
     return run_turn(session_id, prompt)
 
 
-# --------------------------------------------------------------------------
-# LLM-as-judge: wraps the same provider and token the agent itself uses,
-# so DeepEval needs no separate judge key.
-# --------------------------------------------------------------------------
+# judge that reuses the agent's own provider and token, so no separate judge key is needed
 from deepeval.metrics import GEval  # noqa: E402
 from deepeval.models import DeepEvalBaseLLM  # noqa: E402
 from deepeval.test_case import SingleTurnParams  # noqa: E402
@@ -48,13 +39,9 @@ from deepeval.test_case import SingleTurnParams  # noqa: E402
 
 class AgentProviderJudge(DeepEvalBaseLLM):
     def __init__(self):
-        from langchain.chat_models import init_chat_model
+        from agent.agent import _build_model
 
-        self.model = init_chat_model(
-            os.environ["MODEL_NAME"],
-            api_key=os.environ["MODEL_API_TOKEN"],
-            temperature=0,
-        )
+        self.model = _build_model()
 
     def load_model(self):
         return self.model
@@ -91,7 +78,6 @@ def judge() -> AgentProviderJudge:
 
 
 def judge_eval(name: str, criteria: str, threshold: float = 0.6, with_expected: bool = False) -> GEval:
-    """GEval judge on input/actual output (optionally also expected output)."""
     params = [SingleTurnParams.INPUT, SingleTurnParams.ACTUAL_OUTPUT]
     if with_expected:
         params.append(SingleTurnParams.EXPECTED_OUTPUT)
