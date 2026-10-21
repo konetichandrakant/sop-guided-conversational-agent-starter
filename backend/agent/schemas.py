@@ -28,7 +28,7 @@ class Claim(BaseModel):
     created_at: str = Field(description="Date the claim was created, YYYY-MM-DD")
     status: Literal["open", "closed", "denied"] = Field(description="Current status of the claim")
     summary: str = Field(description="Brief summary of what the claim is about")
-    # Optional with defaults: non-denied claims in the fixture have no denial fields at all.
+    # non-denied claims have no denial fields in the fixture
     denial_reason: str = Field(default="", description="Reason the claim was denied; empty string if the claim was not denied")
     documents_needed: list[str] = Field(default_factory=list, description="Documents still required to process or appeal the claim, e.g. pathology report, office note")
     appeal_deadline: str = Field(default="", description="Deadline to file an appeal, YYYY-MM-DD; empty string if not applicable")
@@ -37,15 +37,14 @@ class Claim(BaseModel):
     net_pay: str = Field(description="Final amount the insurer actually paid for the claim, e.g. 0.00")
     net_fee: str = Field(description="Fee schedule rate for the billed service adjusted for contractual obligations, e.g. 1450.00")
 
-# What the agent sends INTO the get_claim tool. Only what is known at call time:
-# party_id comes from verify_profile, everything else is optional context from
-# the user's message. The full Claim model is the OUTPUT of the tool, not the input.
+# what the agent sends into get_claim: party_id comes from verify_profile,
+# the rest is optional context from the user's message (Claim is the output)
 class ClaimQuery(BaseModel):
     party_id: str = Field(description="Party ID of the policy holder, as returned by verify_profile", pattern="^P.+")
     case_id: Optional[str] = Field(default=None, description="One specific case ID if the user named it, e.g. CL-2048", pattern="^CL-.+")
     case_type: Optional[Literal["healthcare", "dental", "auto"]] = Field(default=None, description="Filter by claim category")
     status: Optional[Literal["open", "closed", "denied"]] = Field(default=None, description="Filter by claim status")
-    query: Optional[str] = Field(default=None, description="Free text of what the user asks about, e.g. 'denied healthcare claim missing pathology report'. Used for keyword search over summary, denial reason and documents needed")
+    query: Optional[str] = Field(default=None, description="Free text of what the user asks about, e.g. 'denied healthcare claim missing pathology report'")
 
 # POLICYHOLDER ( VERIFICATION ):
 # {
@@ -61,8 +60,7 @@ class ClaimQuery(BaseModel):
 
 # at least 3 PII info (Full name, DOB, Phone, Email, SSN last 4 digits)
 class Verification(BaseModel):
-    # All optional: verify_profile is called with whatever PII the user actually provided.
-    party_id: Optional[str] = Field(default=None, description="Party ID of the policy holder if already known; null on first verification")
+    party_id: Optional[str] = Field(default=None, description="Party ID of the policy holder if already known")
     name: Optional[str] = Field(default=None, description="Name of the policy holder")
     policy_number: Optional[str] = Field(default=None, description="Policy number of policy holder")
     dob: Optional[str] = Field(default=None, description="Date of birth of the policy holder")

@@ -1,11 +1,4 @@
-"""
-Policyholder verification repository.
-
-Backed by the app fixture (apps/insurance_claims/fixtures/policyholders.json).
-A policyholder record is only returned when the caller matches at least
-MIN_PII_MATCHES identifying fields exactly; alias values on the record
-(name_aliases, phone_aliases, email_aliases) count as matches too.
-"""
+"""Policyholder verification over the fixtures JSON."""
 
 import json
 from pathlib import Path
@@ -22,24 +15,17 @@ MIN_PII_MATCHES = 3
 
 
 def _load_all() -> list[dict]:
-    """Repository read: parse every policyholder fixture row."""
     with open(POLICYHOLDERS_FIXTURE, "r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def _values_with_aliases(record: dict, field: str, aliases_field: str) -> set[str]:
-    """All accepted values for a field: main value plus aliases, lowercased."""
     values = {record.get(field, "")} | set(record.get(aliases_field, []))
     return {str(value).lower() for value in values}
 
 
 def _count_pii_matches(record: dict, provided: Verification) -> int:
-    """
-    Count how many PII fields the caller matched exactly.
-
-    id_type alone proves nothing - it only counts as a match together
-    with its id_last4.
-    """
+    # id_type alone proves nothing - it only counts together with its id_last4
     matched = 0
 
     if provided.name and provided.name.lower() in _values_with_aliases(record, "name", "name_aliases"):
@@ -62,14 +48,8 @@ def _count_pii_matches(record: dict, provided: Verification) -> int:
 
     return matched
 
-def verify_policyholder(data: Verification) -> tuple[Optional[dict], int]:
-    """
-    Verify the caller against the policyholder records.
 
-    Returns (record, matched_count): the best-matching record once at least
-    MIN_PII_MATCHES fields match, otherwise (None, matched_count) so the
-    caller can tell how far short the verification fell.
-    """
+def verify_policyholder(data: Verification) -> tuple[Optional[dict], int]:
     best_record: Optional[dict] = None
     best_matches = 0
 
