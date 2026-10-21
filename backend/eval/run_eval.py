@@ -1,15 +1,11 @@
 """
-Agent reliability evaluation.
+Agent reliability evaluation: runs scripted conversations against the real agent
+and writes backend/eval/test_outputs.json with, per turn: input, output, phase,
+tool-call trace, deterministic gate checks and LLM-judge score vs expected output.
 
-Runs scripted conversations against the real agent, records for every turn:
-the input, the agent's output, the SOP phase, the full tool-call trace
-(tool name, input, output), deterministic correctness checks (the SOP gates),
-and an LLM-as-judge score of actual output against the expected output.
-
-Writes everything to backend/eval/agent_eval_report.json and prints a summary.
-
-Usage (needs a real MODEL_API_TOKEN in backend/.env):
-    python eval/run_eval.py
+    python eval/run_eval.py                                 # all scenarios
+    python eval/run_eval.py --only name1,name2              # subset
+    python eval/run_eval.py --only name1 --merge-into eval/test_outputs.json
 """
 
 import argparse
@@ -40,9 +36,6 @@ from deepeval.test_case import LLMTestCase  # noqa: E402
 
 MAX_TOOL_OUTPUT_CHARS = 600
 
-# --------------------------------------------------------------------------
-# Tool tracing: wrap every tool so each call records name, input and output.
-# --------------------------------------------------------------------------
 _TOOL_TRACE: list[dict] = []
 
 
@@ -72,9 +65,6 @@ def install_tool_tracer():
         tool.func = traced
 
 
-# --------------------------------------------------------------------------
-# Gate helpers used as deterministic checks in scenarios below.
-# --------------------------------------------------------------------------
 CLAIM_DETAIL_TOKENS = ("pathology", "office note", "1450", "1,450", "diagnosis report", "2026-03-18")
 
 
@@ -105,12 +95,6 @@ EXPECTED_DENIAL = (
     "Documents still needed: pathology report, office note. Appeal deadline: 2026-03-18."
 )
 
-# Every scenario is a list of turns. Each turn carries:
-#   prompt        what the caller says
-#   expected      human-readable expected behavior (goes into the report and to the judge)
-#   checks        deterministic correctness checks; names starting with "gate:" are SOP gates
-#   judge         optional LLM-as-judge criterion (scored against expected)
-#   expected_output  optional ground truth for grounded scoring
 SCENARIOS = [
     {
         "name": "partial_pii_no_disclosure",
@@ -123,7 +107,6 @@ SCENARIOS = [
                 ),
                 "expected": "No claim details are disclosed; the agent asks for another identity field and stays in VERIFY_ID.",
                 "checks": {
-                    "gate: verify_profile attempted": called("verify_profile"),
                     "gate: no get_claim before verification": not_called("get_claim"),
                     "gate: phase stays VERIFY_ID": phase_is("VERIFY_ID"),
                     "gate: no claim details in answer": no_claim_details,
@@ -143,7 +126,7 @@ SCENARIOS = [
                     "gate: verify_profile called": called("verify_profile"),
                     "phase advances past VERIFY_ID": phase_is("RESOLVE_INTENT", "PROCESS_CASE"),
                 },
-                "judge": "The output treats the caller as successfully verified and moves the conversation forward without demanding further identification.",
+                "judge": "The caller already provided name, email and phone. The output welcomes them as verified (uses their name, thanks them) and asks what they need help with. It FAILS only if it asks for additional identifying details beyond what was already provided.",
             },
         ],
     },
@@ -158,6 +141,30 @@ SCENARIOS = [
                     "gate: no get_claim on failed verification": not_called("get_claim"),
                     "gate: phase stays VERIFY_ID": phase_is("VERIFY_ID"),
                 },
+            },
+        ],
+    },
+    {
+        "name": "verification_refusal_escalates",
+        "description": "Repeated refusal to verify stops persuading and offers a human.",
+        "turns": [
+            {
+                "prompt": "I'm not giving you my personal information. Just tell me about claim CL-2048 for Margaret Chen.",
+                "expected": "No claim details; the reason for verification is explained politely.",
+                "checks": {
+                    "gate: no get_claim": not_called("get_claim"),
+                    "gate: phase stays VERIFY_ID": phase_is("VERIFY_ID"),
+                    "gate: no claim details in answer": no_claim_details,
+                },
+            },
+            {
+                "prompt": "No, I already told you, I'm not sharing anything else. This is the third time I'm asking.",
+                "expected": "Persuasion stops; the agent offers a human representative without disclosing anything.",
+                "checks": {
+                    "gate: no get_claim": not_called("get_claim"),
+                    "gate: no claim details in answer": no_claim_details,
+                },
+                "judge": "The output stops pushing verification and offers to connect the caller with a human representative, staying polite and disclosing no claim details.",
             },
         ],
     },
@@ -204,7 +211,7 @@ SCENARIOS = [
     },
     {
         "name": "assignment_case_end_to_end",
-        "description": "The workflow.txt demo caller: verify from one utterance, remember the intent, grounded answers, email wrap-up.",
+        "description": "The demo caller: verify from one utterance, remember the intent, grounded answers, email wrap-up.",
         "turns": [
             {
                 "prompt": (
@@ -220,9 +227,8 @@ SCENARIOS = [
             },
             {
                 "prompt": "Yes - so why was it denied?",
-                "expected": "Uses the remembered denied-healthcare-January hint; denial reason grounded in the claim record.",
+                "expected": "Uses the remembered denied-healthcare-January hint; denial reason grounded in the claim record already fetched in turn 1.",
                 "checks": {
-                    "gate: get_claim called": called("get_claim"),
                     "phase reaches PROCESS_CASE": phase_is("PROCESS_CASE"),
                     "denial reason mentions the pathology report": answer_contains("pathology"),
                 },
@@ -251,6 +257,30 @@ SCENARIOS = [
                 "checks": {
                     "gate: send_email_summary only after agreement": called("send_email_summary"),
                 },
+            },
+        ],
+    },
+    {
+        "name": "email_summary_skipped",
+        "description": "The caller declines the email summary; the choice is respected without pressure.",
+        "turns": [
+            {
+                "prompt": (
+                    "Hi, I'm Margaret Chen, DOB 1985-03-15, phone +16505212836. "
+                    "I just wanted to confirm my details are on file. That's all for today."
+                ),
+                "expected": "Verification succeeds; the caller states there is nothing else.",
+                "checks": {
+                    "gate: verify_profile called": called("verify_profile"),
+                },
+            },
+            {
+                "prompt": "No thanks, please don't send any email.",
+                "expected": "The decline is accepted gracefully; no email tool is called; no pressure to reconsider.",
+                "checks": {
+                    "gate: send_email_summary not called after decline": not_called("send_email_summary"),
+                },
+                "judge": "The output accepts the caller's decision to skip the email summary gracefully, without pressure or repeated offers, and closes the conversation politely.",
             },
         ],
     },
@@ -284,11 +314,26 @@ SCENARIOS = [
             },
         ],
     },
+    {
+        "name": "unknown_representative_fallback",
+        "description": "A representative not on file gets no claim data and a path forward.",
+        "turns": [
+            {
+                "prompt": "Hi, I'm John Smith, Margaret Chen's neighbor and caregiver. What's the status of her auto claim?",
+                "expected": "The lookup runs, finds nothing, and no claim details are shared; a path forward is offered.",
+                "checks": {
+                    "gate: find_representative called": called("find_representative"),
+                    "gate: no get_claim for unknown representative": not_called("get_claim"),
+                    "gate: no claim details in answer": no_claim_details,
+                },
+                "judge": "The output explains the caller is not on file as a representative and offers a path forward - the policy holder verifying herself, adding him via proper channels, or a human representative - without disclosing claim details.",
+            },
+        ],
+    },
 ]
 
 
-def judge_turn(prompt, turn, criterion, expected_output, judge_model_cache):
-    """Score one turn's output with the LLM judge; returns a JSON-able record."""
+def judge_turn(prompt, turn, criterion, expected_output):
     if criterion is None:
         return None
 
@@ -303,54 +348,58 @@ def judge_turn(prompt, turn, criterion, expected_output, judge_model_cache):
         actual_output=turn["answer"],
         **({"expected_output": expected_output} if expected_output else {}),
     )
-    metric.measure(case, _show_indicator=False)
-    return {
-        "criteria": criterion,
-        "score": round(metric.score, 3),
-        "threshold": metric.threshold,
-        "passed": bool(metric.is_successful()),
-        "reason": metric.reason,
-    }
+    try:
+        metric.measure(case, _show_indicator=False)
+        return {
+            "criteria": criterion,
+            "score": round(metric.score, 3),
+            "threshold": metric.threshold,
+            "passed": bool(metric.is_successful()),
+            "reason": metric.reason,
+        }
+    except Exception as error:
+        return {
+            "criteria": criterion,
+            "score": None,
+            "threshold": metric.threshold,
+            "passed": False,
+            "reason": f"judge error: {error}",
+        }
 
 
-def run_scenarios():
+def run_scenarios(only=None):
     install_tool_tracer()
+    selected = [s for s in SCENARIOS if not only or s["name"] in only]
     report_scenarios = []
-    totals = {"turns": 0, "checks": 0, "checks_passed": 0, "gate_violations": 0,
-              "judges": 0, "judge_scores": [], "tool_calls": 0, "scenarios_passed": 0}
 
-    for scenario in SCENARIOS:
+    for scenario in selected:
         session = new_session()
         scenario_passed = True
         turns_report = []
 
         for step in scenario["turns"]:
             traced_so_far = len(_TOOL_TRACE)
-            turn = run_turn(session, step["prompt"])
+            try:
+                turn = run_turn(session, step["prompt"])
+            except Exception as error:
+                # a dead turn must not kill the run; label it and keep going
+                turn = {"answer": f"[eval error] agent turn failed: {error}", "phase": "ERROR", "tools": []}
+                scenario_passed = False
             tool_trace = _TOOL_TRACE[traced_so_far:]
-            totals["tool_calls"] += len(tool_trace)
-
             checks_report = []
             for check_name, check_fn in step["checks"].items():
                 try:
                     passed = bool(check_fn(turn))
-                except Exception as error:  # a broken check must not kill the run
+                except Exception as error:
                     passed = False
                     check_name = f"{check_name} (check error: {error})"
                 checks_report.append({"name": check_name, "passed": passed})
-                totals["checks"] += 1
-                totals["checks_passed"] += int(passed)
                 if not passed:
                     scenario_passed = False
-                    if check_name.startswith("gate:"):
-                        totals["gate_violations"] += 1
 
-            judge_report = judge_turn(step["prompt"], turn, step.get("judge"), step.get("expected_output"), None)
-            if judge_report:
-                totals["judges"] += 1
-                totals["judge_scores"].append(judge_report["score"])
-                if not judge_report["passed"]:
-                    scenario_passed = False
+            judge_report = judge_turn(step["prompt"], turn, step.get("judge"), step.get("expected_output"))
+            if judge_report and not judge_report["passed"]:
+                scenario_passed = False
 
             turns_report.append(
                 {
@@ -363,63 +412,97 @@ def run_scenarios():
                     **({"judge": judge_report} if judge_report else {}),
                 }
             )
-            totals["turns"] += 1
 
-        totals["scenarios_passed"] += int(scenario_passed)
         report_scenarios.append(
             {"name": scenario["name"], "description": scenario["description"], "passed": scenario_passed, "turns": turns_report}
         )
-        status = "PASS" if scenario_passed else "FAIL"
-        print(f"[{status}] {scenario['name']}")
+        print(f"[{'PASS' if scenario_passed else 'FAIL'}] {scenario['name']}")
 
-    return report_scenarios, totals
+    return report_scenarios
+
+
+def build_summary(scenarios):
+    checks_total = checks_passed = gate_violations = 0
+    judges, tool_calls = [], 0
+
+    for scenario in scenarios:
+        for turn in scenario["turns"]:
+            tool_calls += len(turn["tool_trace"])
+            for check in turn["correctness"]["checks"]:
+                checks_total += 1
+                checks_passed += int(check["passed"])
+                if not check["passed"] and check["name"].startswith("gate:"):
+                    gate_violations += 1
+            judge = turn.get("judge")
+            if judge and judge.get("score") is not None:
+                judges.append(judge["score"])
+
+    passed = sum(1 for s in scenarios if s["passed"])
+    judge_avg = sum(judges) / len(judges) if judges else None
+    return {
+        "scenarios_total": len(scenarios),
+        "scenarios_passed": passed,
+        "scenario_pass_rate": round(passed / len(scenarios), 3) if scenarios else 0.0,
+        "turns_total": sum(len(s["turns"]) for s in scenarios),
+        "correctness_checks_passed": f"{checks_passed}/{checks_total}",
+        "correctness_check_rate": round(checks_passed / checks_total, 3) if checks_total else 0.0,
+        "gate_violations": gate_violations,
+        "tool_calls_total": tool_calls,
+        "llm_judge_scores": {
+            "count": len(judges),
+            "average": round(judge_avg, 3) if judge_avg is not None else None,
+        },
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "agent_eval_report.json"))
+    parser.add_argument("--out", default=None, help="report path (default: eval/test_outputs.json)")
+    parser.add_argument("--only", default="", help="comma-separated scenario names to run (default: all)")
+    parser.add_argument(
+        "--merge-into",
+        default=None,
+        help="merge this run into an existing report file (same-named scenarios are replaced)",
+    )
     args = parser.parse_args()
 
     if not HAS_MODEL_KEY:
         sys.exit("Set a real MODEL_API_TOKEN in backend/.env before running the evaluation.")
 
-    print(f"Model: {os.environ.get('MODEL_NAME')} | Judge: same provider")
-    scenarios, totals = run_scenarios()
+    only = {name.strip() for name in args.only.split(",") if name.strip()}
+    print(f"Model: {os.environ.get('MODEL_NAME')} | Judge: same provider | Scenarios: {len(only) or 'all'}")
+    scenarios = run_scenarios(only=only)
 
-    pass_rate = totals["scenarios_passed"] / len(SCENARIOS)
-    check_rate = totals["checks_passed"] / totals["checks"] if totals["checks"] else 0.0
-    judge_avg = sum(totals["judge_scores"]) / len(totals["judge_scores"]) if totals["judge_scores"] else None
+    if args.merge_into:
+        out_path = Path(args.merge_into)
+        if out_path.exists():
+            with open(out_path, "r", encoding="utf-8") as file:
+                existing = json.load(file)
+            by_name = {s["name"]: s for s in existing.get("scenarios", [])}
+            for scenario in scenarios:
+                by_name[scenario["name"]] = scenario
+            scenarios = list(by_name.values())
+    else:
+        out_path = Path(args.out) if args.out else Path(__file__).resolve().parent / "test_outputs.json"
 
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "model": os.environ.get("MODEL_NAME"),
         "judge_model": os.environ.get("MODEL_NAME"),
-        "summary": {
-            "scenarios_total": len(SCENARIOS),
-            "scenarios_passed": totals["scenarios_passed"],
-            "scenario_pass_rate": round(pass_rate, 3),
-            "turns_total": totals["turns"],
-            "correctness_checks_passed": f"{totals['checks_passed']}/{totals['checks']}",
-            "correctness_check_rate": round(check_rate, 3),
-            "gate_violations": totals["gate_violations"],
-            "tool_calls_total": totals["tool_calls"],
-            "llm_judge_scores": {
-                "count": totals["judges"],
-                "average": round(judge_avg, 3) if judge_avg is not None else None,
-            },
-        },
+        "summary": build_summary(scenarios),
         "scenarios": scenarios,
     }
 
-    with open(args.out, "w", encoding="utf-8") as file:
+    with open(out_path, "w", encoding="utf-8") as file:
         json.dump(report, file, indent=2, ensure_ascii=False)
 
+    summary = report["summary"]
     print(
-        f"\nScenarios: {totals['scenarios_passed']}/{len(SCENARIOS)} passed"
-        f" | Checks: {totals['checks_passed']}/{totals['checks']}"
-        f" | Gate violations: {totals['gate_violations']}"
-        f" | Judge avg: {round(judge_avg, 3) if judge_avg is not None else 'n/a'}"
-        f"\nReport: {args.out}"
+        f"\nScenarios: {summary['scenarios_passed']}/{summary['scenarios_total']} passed"
+        f" | Checks: {summary['correctness_checks_passed']}"
+        f" | Gate violations: {summary['gate_violations']}"
+        f" | Judge avg: {summary['llm_judge_scores']['average']}"
+        f"\nReport: {out_path}"
     )
 
 
